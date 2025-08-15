@@ -1,9 +1,8 @@
 import streamlit as st
-from PyPDF2 import PdfReader
+import fitz  # PyMuPDF
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain.vectorstores import FAISS
-from langchain.chains import ConversationalRetrievalChain
 from dotenv import load_dotenv
 import os
 
@@ -11,55 +10,70 @@ import os
 load_dotenv()
 os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY")
 
-st.set_page_config(page_title="PDF Summarizer & Chat", layout="wide")
+st.set_page_config(page_title="📄 Creative PDF Summarizer & Chatbot", layout="wide")
+st.title("📄 Creative PDF Summarizer & Chatbot ✨")
 
-st.title("📄 PDF Summarizer & Chatbot")
-
-# Upload PDF
 uploaded_file = st.file_uploader("Upload your PDF", type=["pdf"])
 
 if uploaded_file:
     # Read PDF
-    pdf_reader = PdfReader(uploaded_file)
+    doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
     text = ""
-    for page in pdf_reader.pages:
-        text += page.extract_text()
+    for page in doc:
+        text += page.get_text()
 
     # Chunk text
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=2000,
-        chunk_overlap=200,
+        chunk_size=2500,
+        chunk_overlap=300,
         length_function=len
     )
     chunks = text_splitter.split_text(text)
 
-    # Embeddings
+    # Create embeddings
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     vectorstore = FAISS.from_texts(chunks, embeddings)
 
-    # Conversational Chain
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.5)
-    chain = ConversationalRetrievalChain.from_llm(
-        llm=llm,
-        retriever=vectorstore.as_retriever()
-    )
+    # LLM - use PRO for creativity
+    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.8)
 
-    # Chat state
+    # Chat history
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
 
-    # Summarize button
-    if st.button("📌 Summarize PDF"):
-        summary_prompt = "Summarize this PDF in detail:\n" + text[:10000]  # First 10k chars
+    # Summarize
+    if st.button("📌 Summarize PDF Creatively"):
+        summary_prompt = f"""
+        You are an expert summarizer with a flair for creativity.
+        Summarize the following PDF content in a detailed yet engaging way.
+        Use bullet points, examples, and analogies to make it interesting.
+        PDF Content:
+        {text[:15000]}
+        """
         summary = llm.invoke(summary_prompt)
-        st.subheader("📜 Summary")
+        st.subheader("📜 Creative Summary")
         st.write(summary.content)
 
-    # Chat interface
-    st.subheader("💬 Chat with PDF")
-    user_question = st.text_input("Ask something about the PDF:")
+    # Chat
+    st.subheader("💬 Chat with PDF (Creative Mode)")
+    user_question = st.text_input("Ask anything about the PDF:")
 
     if user_question:
-        response = chain.invoke({"question": user_question, "chat_history": st.session_state.chat_history})
-        st.session_state.chat_history.append((user_question, response["answer"]))
-        st.write("🤖", response["answer"])
+        # Retrieve more context
+        docs = vectorstore.similarity_search(user_question, k=6)
+        context = "\n\n".join([d.page_content for d in docs])
+
+        prompt = f"""
+        You are a creative and knowledgeable assistant.
+        Answer the question using the PDF content provided.
+        Be detailed, insightful, and creative — use examples, analogies, and explanations
+        that make the answer engaging and easy to understand.
+        
+        Question: {user_question}
+        
+        Relevant PDF Content:
+        {context}
+        """
+        response = llm.invoke(prompt)
+        st.session_state.chat_history.append((user_question, response.content))
+        st.write("🤖", response.content)
